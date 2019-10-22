@@ -59,4 +59,14 @@ class Plasmas:
         rsqu = (Rbnd - ds['Rmajor'])**2 + Zbnd**2
         area = rsqu.sum(dim='theta') * self.dtheta/2
 
-        print(area)
+        darea = area.diff('rhos')
+
+        vol = 2 * pi * ds['Rmajor'] * area
+        dvol = 2 * pi * ds['Rmajor'] * darea
+
+        self.area = area
+        self.darea = darea
+        self.vol = vol
+        self.dvol = dvol
+
+    # def calc_fusion_power(self):
