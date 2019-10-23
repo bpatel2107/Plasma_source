@@ -1,6 +1,7 @@
 from numpy import pi, linspace, diff, newaxis, meshgrid, shape
 import numpy as np
 import xarray as xr
+import matplotlib.pyplot as plt
 
 
 class Plasmas:
@@ -10,8 +11,9 @@ class Plasmas:
     """
 
     def __init__(self, Rmajor=2.5, aspect_ratio=1.67, elong=2.8, tri=0.0,
-                 T0=25.0, Tped_height=0.2, n0=16.0, nped_height=0.8, ped_rad=0.9,
-                 nrhos=20, ntheta=1000):
+                 T0=25.0, Tped_height=0.2, Tsep_height=0.01, n0=16.0,
+                 nped_height=0.8, nsep_height=0.01, ped_rad=0.9,
+                 alpha_T=1.0, alpha_n=1.0, nrhos=20, ntheta=1000):
 
         # Radial zones
         self.nrhos = nrhos
@@ -31,16 +33,24 @@ class Plasmas:
         # Kinetic profiles
         self.T0 = T0
         self.Tped_height = Tped_height
+        self.Tsep_height = Tsep_height
+        self.alpha_T = alpha_T
+
         self.n0 = n0
         self.nped_height = nped_height
+        self.nsep_height = nsep_height
+        self.alpha_n = alpha_n
 
         self.ped_rad = ped_rad
 
         # Dataset containing all the grid
         self.ds = self._create_grid(Rmajor=Rmajor, aspect_ratio=aspect_ratio,
                                     elong=elong, tri=tri, T0=T0,
-                                    Tped_height=Tped_height, n0=n0,
-                                    nped_height=nped_height, ped_rad=ped_rad,
+                                    Tped_height=Tped_height,
+                                    Tsep_height=Tsep_height,
+                                    n0=n0, nped_height=nped_height,
+                                    nsep_height=nsep_height, ped_rad=ped_rad,
+                                    alpha_T=alpha_T, alpha_n=alpha_n,
                                     rhos=self.rhos, theta=self.theta)
 
         # Calculate area/volume of each plasma
@@ -62,6 +72,7 @@ class Plasmas:
         Zbnd = ds['elong'] * aminor * ds['rhos'] * np.sin(ds['theta'])
 
         rsqu = (Rbnd - ds['Rmajor'])**2 + Zbnd**2
+
         area = rsqu.sum(dim='theta') * self.dtheta/2
 
         darea = area.diff('rhos')
@@ -78,11 +89,25 @@ class Plasmas:
 
         ds = self.ds
 
-        T = ds['T0'] - ds['T0'] * \
-            (1 - ds['Tped_height'])/ds['ped_rad'] * ds['rhos']
+        Tped = ds['T0']*ds['Tped_height']
+        nped = ds['n0']*ds['nped_height']
 
-        n = ds['n0'] - ds['n0'] * \
-            (1 - ds['nped_height'])/ds['ped_rad'] * ds['rhos']
+        Tsep = ds['T0']*ds['Tsep_height']
+        nsep = ds['n0']*ds['nsep_height']
+
+        # Core profiles
+        Tcore = Tped + (ds['T0'] - Tped) * \
+            (1 - (ds['rhos']/ds['ped_rad'])**2) ** ds['alpha_T']
+        ncore = nped + (ds['n0'] - nped) * \
+            (1 - (ds['rhos']/ds['ped_rad'])**2) ** ds['alpha_n']
+
+        # Edge profiles
+        Tedge = Tsep + (Tped - Tsep) * (1 - ds['rhos'])/(1 - ds['ped_rad'])
+        nedge = nsep + (nped - nsep) * (1 - ds['rhos'])/(1 - ds['ped_rad'])
+
+        # Use core profile inside ped radius, else use edge profile
+        T = Tcore.where(Tcore.rhos < ds['ped_rad'], Tedge)
+        n = ncore.where(ncore.rhos < ds['ped_rad'], nedge)
 
         self.ds['T'] = T
         self.ds['n'] = n
@@ -94,16 +119,39 @@ class Plasmas:
 
         self.gen_kinetic_profiles()
 
-        if fuspow_type == 0:
+        T = ds['T']
+        n = ds['n']
 
-            pden = 1.1e-24 * ds['T']**2 * ds['n']**2 / \
+        if fuspow_type == 0:
+            # Sadler-Van Belle formula
+
+            C1 = 2.5663271e-18
+            C2 = 19.983026
+            C3 = 2.5077133e-2
+            C4 = 2.5773408e-3
+            C5 = 6.1880463e-5
+            C6 = 6.6024089e-2
+            C7 = 8.1215505e-3
+
+            U = 1 - T * (C3 + T*(C4 - C5*T))/(1 + T * (C6 + C7*T))
+
+            rr = C1/(U**(5./6.) * T**(2/3)) * np.exp(-C2 * (U/T)**(1/3))
+
+            pden = n**2 * 1.0e38 / 4 * rr * 17.5e6 * 1.6e-19 *  \
+                self.dvol * 1e-9
+
+        elif fuspow_type == 1:
+            # Wesson fourth edition
+
+            pden = 1.1e-24 * T**2 * n**2 / \
                 4 * 17.5e6 * 1.6e-19 * self.dvol * 1e-9 * 1e38
 
         else:
+            # SCENE's method
 
-            arg = -0.476 * np.abs(np.log(1.45e-5*ds['T']*1e3))**2.25
+            arg = -0.476 * np.abs(np.log(1.45e-5*T*1e3))**2.25
 
-            pden = 1.27e4 * ds['n']**2 * np.exp(arg) * self.vol * 1e-9
+            pden = 5 * 1.27e4 * n**2 * np.exp(arg) * self.dvol * 1e-9
 
         self.ds['pfus'] = pden.sum('rhos')
 
