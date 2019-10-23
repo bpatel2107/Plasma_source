@@ -130,14 +130,12 @@ def get_params(da=None):
     if da is None:
         raise ValueError('DataArray needed as input')
 
-    keys = da.to_dict()['coords'].keys()
+    keys = da.coords.to_index()
+    values = da.data.flatten()
+    filter_params = []
 
-    filter_list = []
-    for pfus in da.data:
+    for i in range(len(values)):
+        if not np.isnan(values[i]):
+            filter_params.append(keys[i])
 
-        print(pfus)
-        # if not np.isnan(da.data):
-        # print(da)
-        # filter_list.append(da.coords)
-
-        # return filter_list
+    return filter_params
