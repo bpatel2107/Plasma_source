@@ -54,7 +54,7 @@ class Plasmas:
                                     rhos=self.rhos, theta=self.theta)
 
         # Calculate area/volume of each plasma
-        self.calc_plasma_vol()
+        self.calc_plasma_vol(self.nrhos, self.ntheta)
 
     def _create_grid(self, **kwargs):
 
@@ -62,6 +62,7 @@ class Plasmas:
         return ds
 
     def calc_plasma_vol(self, nrhos=20, ntheta=1000):
+        # Use Green theorem to find area of plasma boundary
 
         ds = self.ds
         aminor = ds['Rmajor']/ds['aspect_ratio']
@@ -71,9 +72,13 @@ class Plasmas:
 
         Zbnd = ds['elong'] * aminor * ds['rhos'] * np.sin(ds['theta'])
 
-        rsqu = (Rbnd - ds['Rmajor'])**2 + Zbnd**2
+        dR = Rbnd.diff('theta', label='lower')
+        dZ = Zbnd.diff('theta', label='lower')
 
-        area = rsqu.sum(dim='theta') * self.dtheta/2
+        greens = (Rbnd.isel(theta=slice(0, -1))*dZ -
+                  Zbnd.isel(theta=slice(0, -1))*dR)
+
+        area = greens.sum(dim='theta') * 0.5
 
         darea = area.diff('rhos')
 
@@ -86,6 +91,8 @@ class Plasmas:
         self.dvol = dvol
 
     def gen_kinetic_profiles(self):
+        # Generates kinetic profiles using profile form in
+        # Fus Eng Des 87 (2012) 787 - 792
 
         ds = self.ds
 
@@ -113,6 +120,10 @@ class Plasmas:
         self.ds['n'] = n
 
     def calc_fusion_power(self, fuspow_type=0):
+        # Calculates fusion power using 3 differents rule
+        # fuspow_type = 0: Fus Eng Des 87 (2012) 787 - 792
+        # fuspow_type = 1: Parametric form in Wesson Tokamaks 4th edition
+        # fuspow_type = 2: Equation used in SCENE for power
 
         ds = self.ds
         self.fuspow_type = fuspow_type
